@@ -1,4 +1,6 @@
 var AWS = require('aws-sdk');
+var wget = require('wget-improved');
+var fs = require('fs');
 
 // Set location to Ireland
 AWS.config.region = "eu-west-1";
@@ -113,10 +115,73 @@ function getLinkS3(folder, key, bucket) {
 /**
  * Main application code
  */
- 
-function readMessage () {
 
-	// Grab a message from the queue
+function getLocalSampleImageDir(job) {
+  return "job/" + job.uid;
+}
+
+function getLocalSampleImagePath(job) {
+  return getLocalSampleImageDir(job) + "/sample";
+}
+
+function downloadSampleImage(job, callback) {
+  // Make the directory, if required
+  var dir = getLocalSampleImageDir(job);
+  try {
+    stats = fs.lstatSync(dir);
+  }
+  catch (e) {
+    fs.mkdir(dir);
+  }
+
+  // Download the sample image
+  var download = wget.download(job.url, getLocalSampleImagePath(job), {});
+
+  download.on('error', function(err) {
+    console.error(err);
+  });
+
+  download.on('end', function(output) {
+    callback();
+  });
+};
+
+function processMessage(message) {
+  // Extract job as JSON
+  var job = JSON.parse(message.Body);
+  console.log(job);
+
+  // Download source image
+  downloadSampleImage(job, function() {
+    // Do something with the results
+    // TODO
+
+    // Store the results
+    // TODO
+
+    // Delete local source image
+    fs.unlink(getLocalSampleImagePath(job), function() {
+      fs.rmdir(getLocalSampleImageDir(job), function() {
+        console.log("Deleted temporary local files."); 
+      });
+    });
+
+    // Delete completed message
+    removeSQS(message, defaultQueueUrl, function(err, data) {
+      if (err) {
+        console.error(err.message);
+        return readMessage();
+      }
+
+      console.log("Deleted message.");
+
+      // ... and loop!
+      return readMessage();
+    });
+  });
+};
+ 
+function readMessage() {
 	receiveSQS(defaultQueueUrl, function(err, message) {
 		// Error?
 		if (err) {
@@ -126,30 +191,13 @@ function readMessage () {
 
 		// No messages?
 		if (message == null) {
-      console.log("no messages");
+      console.log("No messages in queue.");
       return readMessage();
 		}
 
-		// Process the message
-		// TODO
-		console.log(message.Body);
-
-		// Do something with the results
-		// TODO
-
-		// Delete completed message
-		removeSQS(message, defaultQueueUrl, function(err, data) {
-      if (err) {
-        return console.error(err.message);
-      }
-
-	    console.log("Deleted message");
-
-      // ... and loop!
-      readMessage();
-	  });
+    // Process the message
+		processMessage(message);
 	});
-
 };
 
 readMessage();
