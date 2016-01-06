@@ -1,6 +1,9 @@
 var AWS = require('aws-sdk');
 var wget = require('wget-improved');
 var fs = require('fs');
+var cv = require('opencv');
+var async = require('async');
+var rimraf = require('rimraf');
 
 // Set location to Ireland
 AWS.config.region = "eu-west-1";
@@ -68,7 +71,7 @@ function receiveSQS(queueUrl, callback) {
  */
 
 var s3 = new AWS.S3();
-var defaultBucket = "fontdetective";
+var defaultBucket = "font-detective-image-bucket";
 var defaultFolder = "img";
 
 // Puts a file in specified (bucket, key)
@@ -117,14 +120,36 @@ function getLinkS3(folder, key, bucket) {
  */
 
 function getLocalSampleImageDir(job) {
-  return "job/" + job.uid;
+  return __dirname + "/job/" + job.uid;
 }
 
 function getLocalSampleImagePath(job) {
   return getLocalSampleImageDir(job) + "/sample";
 }
 
-function downloadSampleImage(job, callback) {
+function processMessage(message) {
+  // Extract job as JSON
+  var job = JSON.parse(message.Body);
+  console.log(job);
+
+  var results = {};
+
+  async.series([
+    function (next) { downloadSampleImage(job, next); },
+    function (next) { cropSampleImage(job, next); },
+    function (next) { classifySampleImage(job, results, next); },
+    function (next) { storeResults(job, results, next); },
+    function (next) { deleteSampleImage(job, message, next); },
+    function (done) { done(); readMessage(); }
+  ], function (err) {
+    if (err) {
+      console.log('error!');
+      return console.error(err.message);
+    }
+  });
+};
+
+function downloadSampleImage(job, next) {
   // Make the directory, if required
   var dir = getLocalSampleImageDir(job);
   try {
@@ -138,46 +163,70 @@ function downloadSampleImage(job, callback) {
   var download = wget.download(job.url, getLocalSampleImagePath(job), {});
 
   download.on('error', function(err) {
-    console.error(err);
+    console.error(err.message);
   });
 
   download.on('end', function(output) {
-    callback();
+    next();
   });
 };
 
-function processMessage(message) {
-  // Extract job as JSON
-  var job = JSON.parse(message.Body);
-  console.log(job);
+function cropSampleImage(job, next) {
+  // TODO
+  console.log('TODO - cropSampleImage');
+  next();
+};
 
-  // Download source image
-  downloadSampleImage(job, function() {
-    // Do something with the results
-    // TODO
-
-    // Store the results
-    // TODO
-
-    // Delete local source image
-    fs.unlink(getLocalSampleImagePath(job), function() {
-      fs.rmdir(getLocalSampleImageDir(job), function() {
-        console.log("Deleted temporary local files."); 
+function classifySampleImage(job, results, next) {
+  // Run the cascade files on the image
+  cv.readImage(getLocalSampleImagePath(job), function(err, im) {
+    fs.readdir("./classifiers/", function(err, files) {
+      async.each(files, function(cascadeFile, next) {
+          if (cascadeFile.match(/.*\.xml$/)) {
+          console.log(cascadeFile);
+          im.detectObject(cascadeFile, {neighbors: 2, scale: 2}, function(err, objects) {
+            // Store the results
+            results[cascadeFile] = objects;
+            console.log(objects);
+            next();
+          });
+        } else {
+          next();
+        }
+      }, function (err) {
+        if (err) {
+          return console.error(err.message);
+        }
+        console.log('Done classifying');
+        next();
       });
     });
+  });
+};
 
-    // Delete completed message
-    removeSQS(message, defaultQueueUrl, function(err, data) {
-      if (err) {
-        console.error(err.message);
-        return readMessage();
-      }
+function storeResults(job, results, next) {
+  // TODO
+  console.log('TODO - storeResults');
+  console.log(results);
+  next();
+};
 
-      console.log("Deleted message.");
+function deleteSampleImage(job, message, next) {
+  // Delete local source image
+  rimraf(getLocalSampleImageDir(job), function(err) {
+    if (err) {
+      return console.error(err.message);
+    }
+    console.log("Deleted temporary local files."); 
+  });
 
-      // ... and loop!
-      return readMessage();
-    });
+  // Delete completed message
+  removeSQS(message, defaultQueueUrl, function(err, data) {
+    if (err) {
+      return console.error(err.message);
+    }
+    console.log("Deleted message.");
+    next();
   });
 };
  
