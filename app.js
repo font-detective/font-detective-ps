@@ -4,6 +4,7 @@ var fs = require('fs');
 var cv = require('opencv');
 var async = require('async');
 var rimraf = require('rimraf');
+var easyimg = require('easyimage');
 
 // Set location to Ireland
 AWS.config.region = "eu-west-1";
@@ -67,55 +68,6 @@ function receiveSQS(queueUrl, callback) {
 
 
 /**
- * AWS S3
- */
-
-var s3 = new AWS.S3();
-var defaultBucket = "font-detective-image-bucket";
-var defaultFolder = "img";
-
-// Puts a file in specified (bucket, key)
-function putFileS3(filename, folder, key, bucket, metadata, callback) {
-  var body = fs.createReadStream(filename);
-  putS3(body, folder, key, bucket, metadata, callback);
-}
-
-// Puts data in specified (bucket, key)
-// For now, this is public readable.
-function putS3(body, folder, key, bucket, metadata, callback) {
-  metadata.uploaded = Date.now().toString();
-  var fqkey = (folder != "") ? folder + "/" + key : key;
-  var s3obj = new AWS.S3({params: {Bucket: bucket, Key: fqkey, Metadata: metadata, ACL:'public-read'}});
-  s3obj.upload({Body: body}).
-    on("httpUploadProgress", function(evt){
-        console.log((evt.loaded / evt.total).toFixed(2) + "%");
-    }).
-    send(callback);
-}
-
-// Gets a file in specified (bucket, key)
-function getFileS3(filename, folder, key, bucket, callback) {
-  var params = {Bucket: bucket, Key: fqkey};
-  var file = require('fs').createWriteStream(filename);
-  s3.getObject(params).createReadStream().on("finish", callback).pipe(file);
-}
-
-// Gets data from specified (bucket, key)
-// returns a callback with err, data
-function getS3(callback, folder, key, bucket, callback) {
-  var fqkey = (folder != "") ? folder + "/" + key : key;
-  var params = {Bucket: bucket, Key: fqkey};
-  s3.getObject(params, callback).send();
-}
-
-// Gets the link at which the resource may be accessed
-function getLinkS3(folder, key, bucket) {
-  var fqkey = (folder != "") ? folder + "/" + key : key;
-  return "https://s3-" + AWS.config.region + ".amazonaws.com/" + bucket.toString() + "/" + fqkey.toString();
-}
-
-
-/**
  * Main application code
  */
 
@@ -125,6 +77,10 @@ function getLocalSampleImageDir(job) {
 
 function getLocalSampleImagePath(job) {
   return getLocalSampleImageDir(job) + "/sample";
+}
+
+function getLocalCroppedSampleImagePath(job) {
+  return getLocalSampleImagePath(job) + "-cropped";
 }
 
 function getClassifiersPath() {
@@ -137,7 +93,6 @@ function processMessage(message) {
   console.log(job);
 
   var results = {};
-
   async.series([
     function (next) { downloadSampleImage(job, next); },
     function (next) { cropSampleImage(job, next); },
@@ -176,20 +131,30 @@ function downloadSampleImage(job, next) {
 };
 
 function cropSampleImage(job, next) {
-  // TODO
-  console.log('TODO - cropSampleImage');
-  next();
+  easyimg.rescrop({
+    src: getLocalSampleImagePath(job),
+    dst: getLocalCroppedSampleImagePath(job),
+    width: job.image.w,
+    height: job.image.h,
+    cropwidth: job.selection.w,
+    cropheight: job.selection.h,
+    x: job.selection.x,
+    y: job.selection.y
+  }).then(function(image) {
+    next();
+  });
 };
 
 function classifySampleImage(job, results, next) {
   // Run the cascade files on the image
-  cv.readImage(getLocalSampleImagePath(job), function(err, im) {
+  cv.readImage(getLocalCroppedSampleImagePath(job), function(err, im) {
     fs.readdir(getClassifiersPath(), function(err, files) {
       async.each(files, function(cascadeFile, next) {
           if (cascadeFile.match(/.*\.xml$/)) {
           im.detectObject(getClassifiersPath() + "/" + cascadeFile, {neighbors: 2, scale: 2}, function(err, objects) {
             // Store the results
             results[cascadeFile] = objects;
+            console.log(objects);
             next();
           });
         } else {
@@ -207,9 +172,18 @@ function classifySampleImage(job, results, next) {
 };
 
 function storeResults(job, results, next) {
-  // TODO
+  var resultsBool = {};
+
+  // This needs some work,
+  // for now, assume any detection is correct
+  Object.keys(results).forEach(function(classifier) {
+    resultsBool[classifier] = (results[classifier].length != 0);
+  });
+
+  // TODO - send the results to S3
   console.log('TODO - storeResults');
-  console.log(results);
+  console.log(resultsBool);
+
   next();
 };
 

@@ -12,6 +12,7 @@
   "dependencies": {
     "async": "^1.5.1",
     "aws-sdk": "^2.2.26",
+    "easyimage": "^2.1.0",
     "opencv": "^4.0.0",
     "rimraf": "^2.5.0",
     "wget-improved": "^1.2.1"
