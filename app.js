@@ -66,6 +66,42 @@ function receiveSQS(queueUrl, callback) {
   });
 };
 
+/**
+ * DynamoDB
+ */
+
+var dynamodb = new AWS.DynamoDB();
+
+function putResultsDynamoDb(job, results, callback) {
+  var params = {
+    Item: {
+      uid: {
+        S: job.uid
+      },
+      url: {
+        S: job.url
+      },
+      selection: {
+        S: JSON.stringify(job.selection)
+      },
+      image: {
+        S: JSON.stringify(job.image)
+      },
+      results: {
+        S: JSON.stringify(results)
+      }
+    },
+    TableName: 'results'
+  };
+  dynamodb.putItem(params, function(err, data) {
+    if (err) {
+      return console.error(err.message);
+    }
+    console.log('Stored results in database');
+    callback();
+  });
+}
+
 
 /**
  * Main application code
@@ -90,7 +126,6 @@ function getClassifiersPath() {
 function processMessage(message) {
   // Extract job as JSON
   var job = JSON.parse(message.Body);
-  console.log(job);
 
   var results = {};
   async.series([
@@ -153,8 +188,9 @@ function classifySampleImage(job, results, next) {
           if (cascadeFile.match(/.*\.xml$/)) {
           im.detectObject(getClassifiersPath() + "/" + cascadeFile, {neighbors: 2, scale: 2}, function(err, objects) {
             // Store the results
-            results[cascadeFile] = objects;
-            console.log(objects);
+            results[cascadeFile] = {
+              objects: objects
+            };
             next();
           });
         } else {
@@ -172,19 +208,16 @@ function classifySampleImage(job, results, next) {
 };
 
 function storeResults(job, results, next) {
-  var resultsBool = {};
-
   // This needs some work,
   // for now, assume any detection is correct
+  console.log(results);
   Object.keys(results).forEach(function(classifier) {
-    resultsBool[classifier] = (results[classifier].length != 0);
+    results[classifier].found = (results[classifier].objects.length !== 0);
   });
 
-  // TODO - send the results to S3
-  console.log('TODO - storeResults');
-  console.log(resultsBool);
-
-  next();
+  // Store the results in the database
+  console.log(results);
+  putResultsDynamoDb(job, results, next);
 };
 
 function deleteSampleImage(job, message, next) {
