@@ -120,11 +120,15 @@ function getLinkS3(folder, key, bucket) {
  */
 
 function getLocalSampleImageDir(job) {
-  return __dirname + "/job/" + job.uid;
+  return "./job/" + job.uid;
 }
 
 function getLocalSampleImagePath(job) {
   return getLocalSampleImageDir(job) + "/sample";
+}
+
+function getClassifiersPath() {
+  return  "./classifiers";
 }
 
 function processMessage(message) {
@@ -180,14 +184,12 @@ function cropSampleImage(job, next) {
 function classifySampleImage(job, results, next) {
   // Run the cascade files on the image
   cv.readImage(getLocalSampleImagePath(job), function(err, im) {
-    fs.readdir("./classifiers/", function(err, files) {
+    fs.readdir(getClassifiersPath(), function(err, files) {
       async.each(files, function(cascadeFile, next) {
           if (cascadeFile.match(/.*\.xml$/)) {
-          console.log(cascadeFile);
-          im.detectObject(cascadeFile, {neighbors: 2, scale: 2}, function(err, objects) {
+          im.detectObject(getClassifiersPath() + "/" + cascadeFile, {neighbors: 2, scale: 2}, function(err, objects) {
             // Store the results
             results[cascadeFile] = objects;
-            console.log(objects);
             next();
           });
         } else {
