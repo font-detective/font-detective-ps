@@ -187,9 +187,12 @@ function classifySampleImage(job, results, next) {
       async.each(files, function(cascadeFile, next) {
           if (cascadeFile.match(/.*\.xml$/)) {
           im.detectObject(getClassifiersPath() + "/" + cascadeFile, {neighbors: 2, scale: 2}, function(err, objects) {
+            if (err) {
+              console.error(err.message);
+            }
             // Store the results
             results[cascadeFile] = {
-              objects: objects
+              objects: objects || []
             };
             next();
           });
